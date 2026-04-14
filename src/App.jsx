@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import './index.css'
 
+const GOOGLE_SCRIPT_SRC = 'https://accounts.google.com/gsi/client'
+const GOOGLE_STORAGE_KEY = 'studyspot.googleUser'
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID
+
 const tasks = [
   {
     id: 1,
@@ -220,6 +224,31 @@ function buildGoogleMapsEmbedUrl(query) {
   return `https://www.google.com/maps?q=${encodeURIComponent(query)}&output=embed`
 }
 
+function decodeJwtPayload(credential) {
+  try {
+    const [, payload] = credential.split('.')
+    const normalized = payload.replace(/-/g, '+').replace(/_/g, '/')
+    const json = decodeURIComponent(
+      atob(normalized)
+        .split('')
+        .map((char) => `%${char.charCodeAt(0).toString(16).padStart(2, '0')}`)
+        .join(''),
+    )
+    return JSON.parse(json)
+  } catch {
+    return null
+  }
+}
+
+function getStoredGoogleUser() {
+  try {
+    const raw = localStorage.getItem(GOOGLE_STORAGE_KEY)
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
+}
+
 export default function App() {
   const [theme, setTheme] = useState('light')
   const [screen, setScreen] = useState('morning')
@@ -239,7 +268,12 @@ export default function App() {
   const [cycleSeconds, setCycleSeconds] = useState(0)
   const [sessionActive, setSessionActive] = useState(false)
   const [breakPromptOpen, setBreakPromptOpen] = useState(false)
+  const [googleUser, setGoogleUser] = useState(() => getStoredGoogleUser())
+  const [authReady, setAuthReady] = useState(false)
+  const [authMessage, setAuthMessage] = useState('')
   const intervalRef = useRef(null)
+  const googleButtonRef = useRef(null)
+  const googleInitializedRef = useRef(false)
 
   useEffect(() => {
     const media = window.matchMedia('(prefers-color-scheme: dark)')
@@ -251,6 +285,86 @@ export default function App() {
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme)
   }, [theme])
+
+  useEffect(() => {
+    if (!GOOGLE_CLIENT_ID) {
+      setAuthMessage('Add VITE_GOOGLE_CLIENT_ID to enable Google sign-in.')
+      return
+    }
+
+    let cancelled = false
+    const existingScript = document.querySelector(`script[src="${GOOGLE_SCRIPT_SRC}"]`)
+
+    const initializeGoogle = () => {
+      if (cancelled || !window.google?.accounts?.id || googleInitializedRef.current) return
+
+      window.google.accounts.id.initialize({
+        client_id: GOOGLE_CLIENT_ID,
+        callback: ({ credential }) => {
+          const payload = decodeJwtPayload(credential)
+
+          if (!payload) {
+            setAuthMessage('Google sign-in succeeded, but the profile could not be read.')
+            return
+          }
+
+          const nextUser = {
+            firstName: payload.given_name || payload.name?.split(' ')[0] || 'there',
+            fullName: payload.name || '',
+            email: payload.email || '',
+            picture: payload.picture || '',
+          }
+
+          localStorage.setItem(GOOGLE_STORAGE_KEY, JSON.stringify(nextUser))
+          setGoogleUser(nextUser)
+          setAuthMessage('')
+        },
+      })
+
+      googleInitializedRef.current = true
+      setAuthReady(true)
+    }
+
+    if (existingScript) {
+      if (window.google?.accounts?.id) {
+        initializeGoogle()
+      } else {
+        existingScript.addEventListener('load', initializeGoogle, { once: true })
+      }
+      return () => {
+        cancelled = true
+      }
+    }
+
+    const script = document.createElement('script')
+    script.src = GOOGLE_SCRIPT_SRC
+    script.async = true
+    script.defer = true
+    script.onload = initializeGoogle
+    script.onerror = () => {
+      if (!cancelled) setAuthMessage('Google sign-in failed to load. Please try again.')
+    }
+    document.head.appendChild(script)
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!authReady || !googleButtonRef.current || googleUser || screen !== 'morning' || !window.google?.accounts?.id) {
+      return
+    }
+
+    googleButtonRef.current.innerHTML = ''
+    window.google.accounts.id.renderButton(googleButtonRef.current, {
+      theme: theme === 'dark' ? 'filled_black' : 'outline',
+      size: 'large',
+      text: 'signin_with',
+      shape: 'pill',
+      width: 260,
+    })
+  }, [authReady, googleUser, screen, theme])
 
   useEffect(() => {
     if (!sessionActive) return
@@ -284,6 +398,7 @@ export default function App() {
   const closestSpot = recommendedSpots[0] ?? null
   const chosenSpot = selectedSpot ?? closestSpot
   const mapsEmbedUrl = closestSpot ? buildGoogleMapsEmbedUrl(closestSpot.address) : ''
+  const displayName = googleUser?.firstName || 'there'
 
   useEffect(() => {
     if (!selectedSpot || !recommendedSpots.some((spot) => spot.id === selectedSpot.id)) {
@@ -320,6 +435,15 @@ export default function App() {
 
   const toggleBoolean = (key) => setFilters((prev) => ({ ...prev, [key]: !prev[key] }))
 
+  const signOut = () => {
+    localStorage.removeItem(GOOGLE_STORAGE_KEY)
+    setGoogleUser(null)
+    setAuthMessage('')
+    if (window.google?.accounts?.id) {
+      window.google.accounts.id.disableAutoSelect()
+    }
+  }
+
   return (
     <div className="app-shell">
       <a className="skip-link" href="#main">Skip to content</a>
@@ -335,13 +459,24 @@ export default function App() {
             <h1>StudySpot</h1>
           </div>
         </div>
-        <button
-          className="theme-toggle"
-          onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-          aria-label="Toggle theme"
-        >
-          {theme === 'dark' ? '☀️' : '🌙'}
-        </button>
+        <div className="topbar-actions">
+          {googleUser && (
+            <div className="user-chip" aria-label={`Signed in as ${googleUser.fullName || googleUser.email}`}>
+              {googleUser.picture ? <img src={googleUser.picture} alt="" /> : <span>{displayName.charAt(0)}</span>}
+              <strong>{displayName}</strong>
+            </div>
+          )}
+          {googleUser && (
+            <button className="ghost-btn" onClick={signOut}>Sign out</button>
+          )}
+          <button
+            className="theme-toggle"
+            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+            aria-label="Toggle theme"
+          >
+            {theme === 'dark' ? '☀️' : '🌙'}
+          </button>
+        </div>
       </header>
 
       <main id="main" className="workspace">
@@ -368,9 +503,11 @@ export default function App() {
               <section className="hero-card">
                 <div className="hero-copy">
                   <p className="eyebrow">Morning planning</p>
-                  <h2>{getGreeting()}, Layla</h2>
+                  <h2>{getGreeting()}, {displayName}</h2>
                   <p className="hero-text">
-                    You have 2 hours before class. 
+                    {googleUser
+                      ? `Welcome back${googleUser.email ? `, ${googleUser.email}` : ''}. You have 2 hours before class.`
+                      : 'Sign in with Google to personalize your study dashboard and save your identity in the app.'}
                   </p>
                 </div>
                 <div className="hero-metrics">
@@ -414,11 +551,16 @@ export default function App() {
                 </div>
               </section>
 
-              <section className="insight-card">
-                <p className="eyebrow">Quick suggestion</p>
-                <h3>Best next move</h3>
-                <p>Start with “{tasks[0].title}” in a quiet indoor space so you can finish a full review block before class.</p>
-                <button className="primary-btn" onClick={() => startTaskFlow(tasks[0])}>Start recommended task</button>
+              <section className="insight-card auth-card">
+                <p className="eyebrow">Account</p>
+                <h3>{googleUser ? `You are signed in as ${displayName}` : 'Sign in with Google'}</h3>
+                <p>
+                  {googleUser
+                    ? 'Your first name now appears on the landing page, and you can sign out at any time.'
+                    : 'Use the official Google sign-in button below to authenticate and personalize the greeting.'}
+                </p>
+                {!googleUser && <div ref={googleButtonRef} className="google-button-slot" />}
+                {authMessage && <p className="status-text">{authMessage}</p>}
               </section>
             </div>
           )}
