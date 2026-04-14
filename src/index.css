@@ -199,6 +199,9 @@ button { cursor: pointer; }
   gap: var(--space-6);
   align-items: start;
 }
+.workspace:has(.login-grid) {
+  grid-template-columns: 1fr;
+}
 .journey-card,
 .screen-panel,
 .task-card,
@@ -255,6 +258,29 @@ button { cursor: pointer; }
 .screen-grid {
   display: grid;
   gap: var(--space-5);
+}
+.login-grid {
+  grid-template-columns: 1fr;
+}
+.login-card {
+  max-width: 680px;
+  margin: min(12vh, 5rem) auto;
+  padding: var(--space-12);
+  border-radius: var(--radius-xl);
+  background:
+    linear-gradient(135deg, rgba(11, 110, 116, 0.08), rgba(255, 207, 112, 0.18)),
+    var(--color-surface);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-lg);
+  text-align: center;
+}
+.login-card h2 {
+  font-family: var(--font-display);
+  font-size: clamp(2rem, 1.5rem + 2vw, 3rem);
+  margin: 0 0 var(--space-3);
+}
+.login-card .hero-text {
+  margin: 0 auto;
 }
 .morning-grid {
   grid-template-columns: 1.3fr 1fr;
@@ -360,9 +386,18 @@ button { cursor: pointer; }
 .auth-card {
   align-content: start;
 }
+.login-hero {
+  min-height: 420px;
+  align-items: center;
+}
+.login-metrics {
+  align-content: stretch;
+}
 .google-button-slot {
   min-height: 44px;
   margin-top: var(--space-4);
+  display: flex;
+  justify-content: center;
 }
 .primary-btn,
 .secondary-btn,

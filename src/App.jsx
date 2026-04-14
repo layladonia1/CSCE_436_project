@@ -287,6 +287,15 @@ export default function App() {
   }, [theme])
 
   useEffect(() => {
+    if (!googleUser) {
+      setScreen('login')
+      return
+    }
+
+    setScreen((currentScreen) => (currentScreen === 'login' ? 'morning' : currentScreen))
+  }, [googleUser])
+
+  useEffect(() => {
     if (!GOOGLE_CLIENT_ID) {
       setAuthMessage('Add VITE_GOOGLE_CLIENT_ID to enable Google sign-in.')
       return
@@ -352,7 +361,7 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    if (!authReady || !googleButtonRef.current || googleUser || screen !== 'morning' || !window.google?.accounts?.id) {
+    if (!authReady || !googleButtonRef.current || googleUser || screen !== 'login' || !window.google?.accounts?.id) {
       return
     }
 
@@ -480,24 +489,38 @@ export default function App() {
       </header>
 
       <main id="main" className="workspace">
-        <aside className="journey-card">
-          <p className="eyebrow">Today&apos;s flow</p>
-          <div className="steps">
-            {['Morning', 'Preferences', 'Recommendation', 'Session'].map((label, index) => {
-              const screens = ['morning', 'preferences', 'recommendation', 'session']
-              const active = screens[index] === screen
-              const complete = screens.indexOf(screen) > index
-              return (
-                <div key={label} className={`step ${active ? 'active' : ''} ${complete ? 'complete' : ''}`}>
-                  <div className="step-dot">{index + 1}</div>
-                  <span>{label}</span>
-                </div>
-              )
-            })}
-          </div>
-        </aside>
+        {screen !== 'login' && (
+          <aside className="journey-card">
+            <p className="eyebrow">Today&apos;s flow</p>
+            <div className="steps">
+              {['Morning', 'Preferences', 'Recommendation', 'Session'].map((label, index) => {
+                const screens = ['morning', 'preferences', 'recommendation', 'session']
+                const active = screens[index] === screen
+                const complete = screens.indexOf(screen) > index
+                return (
+                  <div key={label} className={`step ${active ? 'active' : ''} ${complete ? 'complete' : ''}`}>
+                    <div className="step-dot">{index + 1}</div>
+                    <span>{label}</span>
+                  </div>
+                )
+              })}
+            </div>
+          </aside>
+        )}
 
         <section className="screen-panel">
+          {screen === 'login' && (
+            <div className="screen-grid login-grid">
+              <section className="login-card">
+                <p className="eyebrow">Welcome</p>
+                <h2>Welcome to StudySpot!</h2>
+                <p className="hero-text">Please log in to continue.</p>
+                {!googleUser && <div ref={googleButtonRef} className="google-button-slot" />}
+                {authMessage && <p className="status-text">{authMessage}</p>}
+              </section>
+            </div>
+          )}
+
           {screen === 'morning' && (
             <div className="screen-grid morning-grid">
               <section className="hero-card">
@@ -505,9 +528,7 @@ export default function App() {
                   <p className="eyebrow">Morning planning</p>
                   <h2>{getGreeting()}, {displayName}</h2>
                   <p className="hero-text">
-                    {googleUser
-                      ? `Welcome back${googleUser.email ? `, ${googleUser.email}` : ''}. You have 2 hours before class.`
-                      : 'Sign in with Google to personalize your study dashboard and save your identity in the app.'}
+                    Welcome back{googleUser?.email ? `, ${googleUser.email}` : ''}. You have 2 hours before class.
                   </p>
                 </div>
                 <div className="hero-metrics">
@@ -552,15 +573,13 @@ export default function App() {
               </section>
 
               <section className="insight-card auth-card">
-                <p className="eyebrow">Account</p>
-                <h3>{googleUser ? `You are signed in as ${displayName}` : 'Sign in with Google'}</h3>
+                <p className="eyebrow">Quick suggestion</p>
+                <h3>Best next move</h3>
                 <p>
-                  {googleUser
-                    ? 'Your first name now appears on the landing page, and you can sign out at any time.'
-                    : 'Use the official Google sign-in button below to authenticate and personalize the greeting.'}
+                  Start with “{tasks[0].title}” in a quiet indoor space so you can finish a full review block before
+                  class.
                 </p>
-                {!googleUser && <div ref={googleButtonRef} className="google-button-slot" />}
-                {authMessage && <p className="status-text">{authMessage}</p>}
+                <button className="primary-btn" onClick={() => startTaskFlow(tasks[0])}>Start recommended task</button>
               </section>
             </div>
           )}
