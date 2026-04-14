@@ -4,6 +4,7 @@ import './index.css'
 const GOOGLE_SCRIPT_SRC = 'https://accounts.google.com/gsi/client'
 const GOOGLE_STORAGE_KEY = 'studyspot.googleUser'
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID
+const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.readonly'
 
 const tasks = [
   {
@@ -224,6 +225,79 @@ function buildGoogleMapsEmbedUrl(query) {
   return `https://www.google.com/maps?q=${encodeURIComponent(query)}&output=embed`
 }
 
+function getWeekRange(referenceDate = new Date()) {
+  const start = new Date(referenceDate)
+  const day = start.getDay()
+  const diffToMonday = day === 0 ? -6 : 1 - day
+  start.setDate(start.getDate() + diffToMonday)
+  start.setHours(0, 0, 0, 0)
+
+  const end = new Date(start)
+  end.setDate(start.getDate() + 7)
+
+  return { start, end }
+}
+
+function formatWeekRangeLabel(start, end) {
+  const endDisplay = new Date(end)
+  endDisplay.setDate(endDisplay.getDate() - 1)
+
+  return `${start.toLocaleDateString([], { month: 'short', day: 'numeric' })} - ${endDisplay.toLocaleDateString([], {
+    month: 'short',
+    day: 'numeric',
+  })}`
+}
+
+function formatCalendarEventTime(dateTimeValue) {
+  if (!dateTimeValue) return 'All day'
+
+  const eventDate = new Date(dateTimeValue)
+  if (Number.isNaN(eventDate.getTime())) return 'Time unavailable'
+
+  return eventDate.toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  })
+}
+
+function formatWeekdayLabel(date) {
+  return date.toLocaleDateString([], { weekday: 'short' })
+}
+
+function formatDayNumber(date) {
+  return date.toLocaleDateString([], { day: 'numeric' })
+}
+
+function getEventStartDate(event) {
+  const rawValue = event.start?.dateTime || event.start?.date
+  const eventDate = rawValue ? new Date(rawValue) : null
+  return eventDate && !Number.isNaN(eventDate.getTime()) ? eventDate : null
+}
+
+function buildWeekCalendar(events, referenceDate = new Date()) {
+  const { start } = getWeekRange(referenceDate)
+
+  return Array.from({ length: 7 }, (_, index) => {
+    const dayDate = new Date(start)
+    dayDate.setDate(start.getDate() + index)
+    const dayKey = dayDate.toISOString().slice(0, 10)
+
+    const dayEvents = events.filter((event) => {
+      const eventDate = getEventStartDate(event)
+      return eventDate && eventDate.toISOString().slice(0, 10) === dayKey
+    })
+
+    return {
+      key: dayKey,
+      label: formatWeekdayLabel(dayDate),
+      dayNumber: formatDayNumber(dayDate),
+      events: dayEvents,
+    }
+  })
+}
+
 function decodeJwtPayload(credential) {
   try {
     const [, payload] = credential.split('.')
@@ -271,9 +345,15 @@ export default function App() {
   const [googleUser, setGoogleUser] = useState(() => getStoredGoogleUser())
   const [authReady, setAuthReady] = useState(false)
   const [authMessage, setAuthMessage] = useState('')
+  const [calendarEvents, setCalendarEvents] = useState([])
+  const [calendarLoading, setCalendarLoading] = useState(false)
+  const [calendarMessage, setCalendarMessage] = useState('')
+  const [calendarAuthorized, setCalendarAuthorized] = useState(false)
+  const [calendarToken, setCalendarToken] = useState(null)
   const intervalRef = useRef(null)
   const googleButtonRef = useRef(null)
   const googleInitializedRef = useRef(false)
+  const calendarTokenClientRef = useRef(null)
 
   useEffect(() => {
     const media = window.matchMedia('(prefers-color-scheme: dark)')
@@ -329,6 +409,53 @@ export default function App() {
           setAuthMessage('')
         },
       })
+
+      if (window.google.accounts.oauth2) {
+        calendarTokenClientRef.current = window.google.accounts.oauth2.initTokenClient({
+          client_id: GOOGLE_CLIENT_ID,
+          scope: GOOGLE_CALENDAR_SCOPE,
+          callback: async (tokenResponse) => {
+            if (tokenResponse.error) {
+              setCalendarMessage('Calendar access was not granted.')
+              setCalendarLoading(false)
+              return
+            }
+
+            setCalendarToken(tokenResponse)
+            setCalendarAuthorized(true)
+            setCalendarMessage('')
+            setCalendarLoading(true)
+
+            try {
+              const response = await fetch(
+                'https://www.googleapis.com/calendar/v3/calendars/primary/events?maxResults=20&orderBy=startTime&singleEvents=true&timeMin=' +
+                  encodeURIComponent(currentWeekRange.start.toISOString()) +
+                  '&timeMax=' +
+                  encodeURIComponent(currentWeekRange.end.toISOString()),
+                {
+                  headers: {
+                    Authorization: `Bearer ${tokenResponse.access_token}`,
+                  },
+                },
+              )
+
+              if (!response.ok) {
+                throw new Error(`Calendar request failed with status ${response.status}`)
+              }
+
+              const data = await response.json()
+              setCalendarEvents(data.items ?? [])
+              if (!data.items?.length) {
+                setCalendarMessage('No events scheduled for this week.')
+              }
+            } catch {
+              setCalendarMessage('Unable to load your calendar right now.')
+            } finally {
+              setCalendarLoading(false)
+            }
+          },
+        })
+      }
 
       googleInitializedRef.current = true
       setAuthReady(true)
@@ -408,6 +535,8 @@ export default function App() {
   const chosenSpot = selectedSpot ?? closestSpot
   const mapsEmbedUrl = closestSpot ? buildGoogleMapsEmbedUrl(closestSpot.address) : ''
   const displayName = googleUser?.firstName || 'there'
+  const currentWeekRange = useMemo(() => getWeekRange(), [])
+  const weekCalendar = useMemo(() => buildWeekCalendar(calendarEvents), [calendarEvents])
 
   useEffect(() => {
     if (!selectedSpot || !recommendedSpots.some((spot) => spot.id === selectedSpot.id)) {
@@ -444,10 +573,30 @@ export default function App() {
 
   const toggleBoolean = (key) => setFilters((prev) => ({ ...prev, [key]: !prev[key] }))
 
+  const connectGoogleCalendar = () => {
+    if (!calendarTokenClientRef.current) {
+      setCalendarMessage('Calendar setup is not ready yet.')
+      return
+    }
+
+    setCalendarLoading(true)
+    setCalendarMessage('')
+    calendarTokenClientRef.current.requestAccessToken({
+      prompt: calendarToken ? '' : 'consent',
+    })
+  }
+
   const signOut = () => {
     localStorage.removeItem(GOOGLE_STORAGE_KEY)
     setGoogleUser(null)
     setAuthMessage('')
+    setCalendarEvents([])
+    setCalendarMessage('')
+    setCalendarAuthorized(false)
+    if (calendarToken?.access_token && window.google?.accounts?.oauth2) {
+      window.google.accounts.oauth2.revoke(calendarToken.access_token)
+    }
+    setCalendarToken(null)
     if (window.google?.accounts?.id) {
       window.google.accounts.id.disableAutoSelect()
     }
@@ -580,6 +729,50 @@ export default function App() {
                   class.
                 </p>
                 <button className="primary-btn" onClick={() => startTaskFlow(tasks[0])}>Start recommended task</button>
+              </section>
+
+              <section className="insight-card calendar-card">
+                <p className="eyebrow">Google Calendar</p>
+                <h3>This week</h3>
+                <p>
+                  Connect your Google Calendar to preview your weekly schedule for{' '}
+                  {formatWeekRangeLabel(currentWeekRange.start, currentWeekRange.end)}.
+                </p>
+                {!calendarAuthorized && (
+                  <button className="secondary-btn" onClick={connectGoogleCalendar} disabled={calendarLoading}>
+                    {calendarLoading ? 'Connecting...' : 'Connect Google Calendar'}
+                  </button>
+                )}
+                {calendarAuthorized && (
+                  <button className="ghost-btn" onClick={connectGoogleCalendar} disabled={calendarLoading}>
+                    {calendarLoading ? 'Refreshing...' : 'Refresh events'}
+                  </button>
+                )}
+                {calendarAuthorized && (
+                  <div className="calendar-week-grid">
+                    {weekCalendar.map((day) => (
+                      <article key={day.key} className="calendar-day-column">
+                        <div className="calendar-day-header">
+                          <span>{day.label}</span>
+                          <strong>{day.dayNumber}</strong>
+                        </div>
+                        {day.events.length > 0 ? (
+                          <div className="calendar-event-list">
+                            {day.events.map((event) => (
+                              <article key={event.id} className="calendar-event-item">
+                                <strong>{event.summary || 'Untitled event'}</strong>
+                                <span>{formatCalendarEventTime(event.start?.dateTime || event.start?.date)}</span>
+                              </article>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="calendar-empty-day">Free day</p>
+                        )}
+                      </article>
+                    ))}
+                  </div>
+                )}
+                {calendarMessage && <p className="status-text">{calendarMessage}</p>}
               </section>
             </div>
           )}

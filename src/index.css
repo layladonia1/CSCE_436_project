@@ -386,6 +386,71 @@ button { cursor: pointer; }
 .auth-card {
   align-content: start;
 }
+.calendar-card {
+  display: grid;
+  gap: var(--space-4);
+  align-content: start;
+  grid-column: 1 / -1;
+}
+.calendar-week-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(150px, 1fr));
+  gap: var(--space-3);
+  overflow-x: auto;
+  padding-right: var(--space-3);
+  padding-bottom: var(--space-2);
+}
+.calendar-day-column {
+  display: grid;
+  gap: var(--space-3);
+  align-content: start;
+  padding: var(--space-4);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  min-height: 190px;
+  min-width: 150px;
+}
+.calendar-day-header {
+  display: grid;
+  gap: var(--space-1);
+}
+.calendar-day-header span {
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.calendar-day-header strong {
+  font-size: var(--text-lg);
+}
+.calendar-event-list {
+  display: grid;
+  gap: var(--space-3);
+}
+.calendar-event-item {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-4);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+.calendar-event-item strong {
+  font-size: var(--text-base);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.calendar-event-item span {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  line-height: 1.4;
+}
+.calendar-empty-day {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
 .login-hero {
   min-height: 420px;
   align-items: center;
