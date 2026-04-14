@@ -35,6 +35,7 @@ const spots = [
   {
     id: 1,
     name: 'Evans Library Quiet Floor',
+    address: 'Sterling C. Evans Library, 400 Spence St, College Station, TX 77843',
     vibe: 'Silent focus',
     noise: 'Low',
     outlet: true,
@@ -48,6 +49,7 @@ const spots = [
   {
     id: 2,
     name: 'MSC Lounge',
+    address: 'Memorial Student Center, 275 Joe Routt Blvd, College Station, TX 77843',
     vibe: 'Casual and flexible',
     noise: 'Medium',
     outlet: true,
@@ -61,6 +63,7 @@ const spots = [
   {
     id: 3,
     name: 'Zachry Collaboration Zone',
+    address: 'Zachry Engineering Education Complex, 125 Spence St, College Station, TX 77843',
     vibe: 'Productive buzz',
     noise: 'Medium',
     outlet: true,
@@ -74,6 +77,7 @@ const spots = [
   {
     id: 4,
     name: 'Academic Plaza Outdoor Tables',
+    address: 'Academic Plaza, 766 Military Walk, College Station, TX 77840',
     vibe: 'Fresh air reset',
     noise: 'Medium',
     outlet: false,
@@ -83,6 +87,76 @@ const spots = [
     lateHours: false,
     comfort: 'Medium',
     reason: 'Best when you want sunlight, open space, and a lighter study session.',
+  },
+  {
+    id: 5,
+    name: 'Zachry HPE Tech Deck',
+    address: 'Zachry Engineering Education Complex, 125 Spence St, College Station, TX 77843',
+    vibe: 'Greenery with city views',
+    noise: 'Low',
+    outlet: false,
+    groupFriendly: true,
+    indoor: false,
+    nearCoffee: false,
+    lateHours: true,
+    comfort: 'Medium',
+    reason: 'Best if you want to study in a refreshing green space with views of the skyline.',
+  },
+  {
+    id: 6,
+    name: 'Quadbucks - Upper Floors',
+    address: 'Starbucks - The Quad, 546 Coke St, College Station, TX 77843',
+    vibe: 'Cafe vibes',
+    noise: 'Medium',
+    outlet: true,
+    groupFriendly: true,
+    indoor: true,
+    nearCoffee: true,
+    lateHours: false,
+    comfort: 'High',
+    reason: 'Best for a casual study environment with a nearby cafe.',
+  },
+  {
+    id: 7,
+    name: 'ETB',
+    address: 'Emerging Technology Building, 101 Bizzell St, College Station, TX 77843',
+    vibe: 'Study Chatter',
+    noise: 'Medium',
+    outlet: true,
+    groupFriendly: true,
+    indoor: true,
+    nearCoffee: false,
+    lateHours: false,
+    comfort: 'High',
+    reason: 'Best for group work or if you like some background noise while studying.',
+  },
+  {
+    id: 8,
+    name: 'Architecture Building',
+    address: 'Department of Architecture, Center Building A, Langford Architecture Bldg, 798 Ross St #422, College Station, TX 77840',
+    vibe: 'Spacious',
+    noise: 'Medium',
+    outlet: true,
+    groupFriendly: true,
+    indoor: true,
+    nearCoffee: true,
+    lateHours: true,
+    comfort: 'High',
+    reason: 'Best for longer study sessions when you want a change of scenery and access to food at Azimuth Cafe.',
+  },
+  {
+    id: 9,
+    name: 'Zachbucks',
+    address: 'Zachry Engineering Education Complex, 125 Spence St, College Station, TX 77843',
+    vibe: 'Cafe vibes',
+    noise: 'Medium',
+    outlet: true,
+    groupFriendly: true,
+    indoor: true,
+    nearCoffee: true,
+    lateHours: false,
+    comfort: 'High',
+    reason: 'Best for a casual study environment with a nearby cafe.',
   },
 ]
 
@@ -106,7 +180,18 @@ function getGreeting() {
   return 'Good evening'
 }
 
-function recommendSpot(filters) {
+function matchesFilters(spot, filters) {
+  if (filters.noise && spot.noise !== filters.noise) return false
+  if (filters.setting === 'Indoor' && !spot.indoor) return false
+  if (filters.setting === 'Outdoor' && spot.indoor) return false
+  if (filters.outlet && !spot.outlet) return false
+  if (filters.groupFriendly && !spot.groupFriendly) return false
+  if (filters.nearCoffee && !spot.nearCoffee) return false
+  if (filters.lateHours && !spot.lateHours) return false
+  return true
+}
+
+function recommendSpots(filters) {
   const scored = spots.map((spot) => {
     let score = 0
     if (filters.noise && spot.noise === filters.noise) score += 2
@@ -119,13 +204,20 @@ function recommendSpot(filters) {
     return { ...spot, score }
   })
 
-  return scored.sort((a, b) => b.score - a.score)[0]
+  const exactMatches = scored.filter((spot) => matchesFilters(spot, filters))
+  const ranked = exactMatches.length ? exactMatches : scored
+
+  return ranked.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name)).slice(0, 3)
 }
 
 function formatTime(seconds) {
   const mins = Math.floor(seconds / 60)
   const secs = seconds % 60
   return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
+}
+
+function buildGoogleMapsEmbedUrl(query) {
+  return `https://www.google.com/maps?q=${encodeURIComponent(query)}&output=embed`
 }
 
 export default function App() {
@@ -140,8 +232,8 @@ export default function App() {
     nearCoffee: false,
     lateHours: true,
   })
+  const [selectedSpot, setSelectedSpot] = useState(null)
   const [studyHours, setStudyHours] = useState(2)
-  const [feedback, setFeedback] = useState(null)
   const [mode, setMode] = useState('focus')
   const [secondsLeft, setSecondsLeft] = useState(50 * 60)
   const [cycleSeconds, setCycleSeconds] = useState(0)
@@ -188,7 +280,16 @@ export default function App() {
     }
   }, [cycleSeconds, mode])
 
-  const recommendation = useMemo(() => recommendSpot(filters), [filters])
+  const recommendedSpots = useMemo(() => recommendSpots(filters), [filters])
+  const closestSpot = recommendedSpots[0] ?? null
+  const chosenSpot = selectedSpot ?? closestSpot
+  const mapsEmbedUrl = closestSpot ? buildGoogleMapsEmbedUrl(closestSpot.address) : ''
+
+  useEffect(() => {
+    if (!selectedSpot || !recommendedSpots.some((spot) => spot.id === selectedSpot.id)) {
+      setSelectedSpot(recommendedSpots[0] ?? null)
+    }
+  }, [recommendedSpots, selectedSpot])
 
   const startTaskFlow = (task) => {
     setSelectedTask(task)
@@ -214,7 +315,7 @@ export default function App() {
   const completeSession = () => {
     setSessionActive(false)
     clearInterval(intervalRef.current)
-    setScreen('feedback')
+    setScreen('morning')
   }
 
   const toggleBoolean = (key) => setFilters((prev) => ({ ...prev, [key]: !prev[key] }))
@@ -247,8 +348,8 @@ export default function App() {
         <aside className="journey-card">
           <p className="eyebrow">Today&apos;s flow</p>
           <div className="steps">
-            {['Morning', 'Preferences', 'Recommendation', 'Session', 'Feedback'].map((label, index) => {
-              const screens = ['morning', 'preferences', 'recommendation', 'session', 'feedback']
+            {['Morning', 'Preferences', 'Recommendation', 'Session'].map((label, index) => {
+              const screens = ['morning', 'preferences', 'recommendation', 'session']
               const active = screens[index] === screen
               const complete = screens.indexOf(screen) > index
               return (
@@ -377,19 +478,40 @@ export default function App() {
                 </div>
                 <div className="footer-actions">
                   <button className="secondary-btn" onClick={() => setScreen('morning')}>Save for later</button>
-                  <button className="primary-btn" onClick={() => setScreen('recommendation')}>See recommendation</button>
+                  <button
+                    className="primary-btn"
+                    onClick={() => {
+                      setSelectedSpot(recommendedSpots[0] ?? null)
+                      setScreen('recommendation')
+                    }}
+                  >
+                    See recommendation
+                  </button>
                 </div>
               </section>
 
               <aside className="preference-card preview-card">
                 <p className="eyebrow">Live preview</p>
-                <h3>{recommendation.name}</h3>
-                <p>{recommendation.reason}</p>
-                <div className="preview-badges">
-                  <span>{recommendation.noise} noise</span>
-                  <span>{recommendation.comfort} comfort</span>
-                  <span>{recommendation.indoor ? 'Indoor' : 'Outdoor'}</span>
-                </div>
+                {closestSpot ? (
+                  <>
+                    <h3>{closestSpot.name}</h3>
+                    <p>{closestSpot.reason}</p>
+                    <div className="preview-badges">
+                      <span>{closestSpot.noise} noise</span>
+                      <span>{closestSpot.comfort} comfort</span>
+                      <span>{closestSpot.indoor ? 'Indoor' : 'Outdoor'}</span>
+                    </div>
+                    <iframe
+                      className="map-frame"
+                      title={`${closestSpot.name} map preview`}
+                      loading="lazy"
+                      referrerPolicy="no-referrer-when-downgrade"
+                      src={mapsEmbedUrl}
+                    />
+                  </>
+                ) : (
+                  <p className="status-text">No study spots match the current criteria.</p>
+                )}
               </aside>
             </div>
           )}
@@ -397,10 +519,49 @@ export default function App() {
           {screen === 'recommendation' && (
             <div className="skeleton-view">
               <p className="eyebrow">Recommended spot</p>
-              <h2>{recommendation.name}</h2>
-              <p>{recommendation.reason}</p>
+              {chosenSpot ? (
+                <>
+                  <h2>{chosenSpot.name}</h2>
+                  <p>{chosenSpot.reason}</p>
+                  <div className="recommendation-list">
+                    {recommendedSpots.map((spot, index) => {
+                      const isChosen = chosenSpot.id === spot.id
+                      return (
+                        <article key={spot.id} className={`recommendation-item ${isChosen ? 'featured' : ''}`}>
+                          <div>
+                            <p className="eyebrow">Option {index + 1}</p>
+                            <h3>{spot.name}</h3>
+                          </div>
+                          <p>{spot.reason}</p>
+                          <p className="spot-address">{spot.address}</p>
+                          <div className="preview-badges">
+                            <span>{spot.noise} noise</span>
+                            <span>{spot.comfort} comfort</span>
+                            <span>{spot.indoor ? 'Indoor' : 'Outdoor'}</span>
+                          </div>
+                          <iframe
+                            className="map-frame recommendation-map"
+                            title={`${spot.name} map preview`}
+                            loading="lazy"
+                            referrerPolicy="no-referrer-when-downgrade"
+                            src={buildGoogleMapsEmbedUrl(spot.address)}
+                          />
+                          <button className="secondary-btn" onClick={() => setSelectedSpot(spot)}>
+                            {isChosen ? 'Chosen spot' : 'Choose this spot'}
+                          </button>
+                        </article>
+                      )
+                    })}
+                  </div>
+                </>
+              ) : (
+                <div className="summary-text">
+                  <span>No recommendations yet</span>
+                  <strong>Adjust your filters to see spots</strong>
+                </div>
+              )}
               <div className="mini-grid">
-                <div className="mini-card"><span>Noise</span><strong>{recommendation.noise}</strong></div>
+                <div className="mini-card"><span>Noise</span><strong>{chosenSpot?.noise ?? 'N/A'}</strong></div>
                 <div className="mini-card"><span>Availability</span><strong>High</strong></div>
                 <div className="mini-card"><span>Best for</span><strong>{selectedTask.type}</strong></div>
               </div>
@@ -419,7 +580,7 @@ export default function App() {
             <div className="skeleton-view">
               <p className="eyebrow">Active study</p>
               <h2>{mode === 'focus' ? 'Focus session' : 'Break time'}</h2>
-              <p>{selectedTask.title} · {recommendation.name}</p>
+              <p>{selectedTask.title} · {chosenSpot?.name ?? 'Selected spot'}</p>
               <div className="timer-ring">
                 <div>
                   <span>{mode === 'focus' ? 'Time left' : 'Break left'}</span>
@@ -442,19 +603,6 @@ export default function App() {
                 <button className="ghost-btn" onClick={() => setSessionActive((prev) => !prev)}>{sessionActive ? 'Pause' : 'Resume'}</button>
                 <button className="primary-btn" onClick={completeSession}>Complete session</button>
               </div>
-            </div>
-          )}
-
-          {screen === 'feedback' && (
-            <div className="skeleton-view">
-              <p className="eyebrow">Feedback</p>
-              <h2>Was this study spot helpful?</h2>
-              <p>Your answer helps improve future spot recommendations.</p>
-              <div className="feedback-row">
-                <button className={`feedback-btn ${feedback === 'yes' ? 'selected' : ''}`} onClick={() => setFeedback('yes')}>Yes</button>
-                <button className={`feedback-btn ${feedback === 'no' ? 'selected' : ''}`} onClick={() => setFeedback('no')}>No</button>
-              </div>
-              <button className="primary-btn" onClick={() => setScreen('morning')}>Back to morning view</button>
             </div>
           )}
         </section>
