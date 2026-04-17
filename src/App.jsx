@@ -797,7 +797,6 @@ export default function App() {
                     <div className="calendar-preview-shell">
                       <div className="calendar-preview-bar">
                         <span>Calendar snapshot</span>
-                        <strong>Click to open full calendar</strong>
                       </div>
                       <div className="calendar-week-grid">
                         {weekCalendar.map((day) => (
