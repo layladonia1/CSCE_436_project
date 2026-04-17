@@ -296,15 +296,20 @@ function getEventStartDate(event) {
   return eventDate && !Number.isNaN(eventDate.getTime()) ? eventDate : null
 }
 
+function isTimedEvent(event) {
+  return Boolean(event.start?.dateTime)
+}
+
 function buildWeekCalendar(events, referenceDate = new Date()) {
   const { start } = getWeekRange(referenceDate)
+  const timedEvents = events.filter(isTimedEvent)
 
   return Array.from({ length: 7 }, (_, index) => {
     const dayDate = new Date(start)
     dayDate.setDate(start.getDate() + index)
     const dayKey = getLocalDateKey(dayDate)
 
-    const dayEvents = events.filter((event) => {
+    const dayEvents = timedEvents.filter((event) => {
       const eventDate = getEventStartDate(event)
       return eventDate && getLocalDateKey(eventDate) === dayKey
     })
