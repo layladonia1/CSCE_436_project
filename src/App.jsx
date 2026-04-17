@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import './index.css'
 
+const GOOGLE_SCRIPT_SRC = 'https://accounts.google.com/gsi/client'
+const GOOGLE_STORAGE_KEY = 'studyspot.googleUser'
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID
+const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.readonly'
+const GOOGLE_CALENDAR_WEEK_URL = 'https://calendar.google.com/calendar/u/0/r/week'
+
 const tasks = [
   {
     id: 1,
@@ -220,6 +226,128 @@ function buildGoogleMapsEmbedUrl(query) {
   return `https://www.google.com/maps?q=${encodeURIComponent(query)}&output=embed`
 }
 
+function getWeekRange(referenceDate = new Date()) {
+  const start = new Date(referenceDate)
+  const day = start.getDay()
+  const diffToMonday = day === 0 ? -6 : 1 - day
+  start.setDate(start.getDate() + diffToMonday)
+  start.setHours(0, 0, 0, 0)
+
+  const end = new Date(start)
+  end.setDate(start.getDate() + 7)
+
+  return { start, end }
+}
+
+function formatWeekRangeLabel(start, end) {
+  const endDisplay = new Date(end)
+  endDisplay.setDate(endDisplay.getDate() - 1)
+
+  return `${start.toLocaleDateString([], { month: 'short', day: 'numeric' })} - ${endDisplay.toLocaleDateString([], {
+    month: 'short',
+    day: 'numeric',
+  })}`
+}
+
+function formatCalendarEventTime(dateTimeValue) {
+  if (!dateTimeValue) return 'All day'
+
+  const eventDate = new Date(dateTimeValue)
+  if (Number.isNaN(eventDate.getTime())) return 'Time unavailable'
+
+  return eventDate.toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  })
+}
+
+function formatWeekdayLabel(date) {
+  return date.toLocaleDateString([], { weekday: 'short' })
+}
+
+function formatDayNumber(date) {
+  return date.toLocaleDateString([], { day: 'numeric' })
+}
+
+function getLocalDateKey(date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function parseCalendarDateValue(rawValue) {
+  if (!rawValue) return null
+
+  // Google all-day events use YYYY-MM-DD. Parse those in local time to avoid UTC day shifts.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(rawValue)) {
+    const [year, month, day] = rawValue.split('-').map(Number)
+    return new Date(year, month - 1, day)
+  }
+
+  return new Date(rawValue)
+}
+
+function getEventStartDate(event) {
+  const rawValue = event.start?.dateTime || event.start?.date
+  const eventDate = parseCalendarDateValue(rawValue)
+  return eventDate && !Number.isNaN(eventDate.getTime()) ? eventDate : null
+}
+
+function isTimedEvent(event) {
+  return Boolean(event.start?.dateTime)
+}
+
+function buildWeekCalendar(events, referenceDate = new Date()) {
+  const { start } = getWeekRange(referenceDate)
+  const timedEvents = events.filter(isTimedEvent)
+
+  return Array.from({ length: 7 }, (_, index) => {
+    const dayDate = new Date(start)
+    dayDate.setDate(start.getDate() + index)
+    const dayKey = getLocalDateKey(dayDate)
+
+    const dayEvents = timedEvents.filter((event) => {
+      const eventDate = getEventStartDate(event)
+      return eventDate && getLocalDateKey(eventDate) === dayKey
+    })
+
+    return {
+      key: dayKey,
+      label: formatWeekdayLabel(dayDate),
+      dayNumber: formatDayNumber(dayDate),
+      events: dayEvents,
+    }
+  })
+}
+
+function decodeJwtPayload(credential) {
+  try {
+    const [, payload] = credential.split('.')
+    const normalized = payload.replace(/-/g, '+').replace(/_/g, '/')
+    const json = decodeURIComponent(
+      atob(normalized)
+        .split('')
+        .map((char) => `%${char.charCodeAt(0).toString(16).padStart(2, '0')}`)
+        .join(''),
+    )
+    return JSON.parse(json)
+  } catch {
+    return null
+  }
+}
+
+function getStoredGoogleUser() {
+  try {
+    const raw = localStorage.getItem(GOOGLE_STORAGE_KEY)
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
+}
+
 export default function App() {
   const [theme, setTheme] = useState('light')
   const [screen, setScreen] = useState('morning')
@@ -239,7 +367,18 @@ export default function App() {
   const [cycleSeconds, setCycleSeconds] = useState(0)
   const [sessionActive, setSessionActive] = useState(false)
   const [breakPromptOpen, setBreakPromptOpen] = useState(false)
+  const [googleUser, setGoogleUser] = useState(() => getStoredGoogleUser())
+  const [authReady, setAuthReady] = useState(false)
+  const [authMessage, setAuthMessage] = useState('')
+  const [calendarEvents, setCalendarEvents] = useState([])
+  const [calendarLoading, setCalendarLoading] = useState(false)
+  const [calendarMessage, setCalendarMessage] = useState('')
+  const [calendarAuthorized, setCalendarAuthorized] = useState(false)
+  const [calendarToken, setCalendarToken] = useState(null)
   const intervalRef = useRef(null)
+  const googleButtonRef = useRef(null)
+  const googleInitializedRef = useRef(false)
+  const calendarTokenClientRef = useRef(null)
 
   useEffect(() => {
     const media = window.matchMedia('(prefers-color-scheme: dark)')
@@ -251,6 +390,142 @@ export default function App() {
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme)
   }, [theme])
+
+  useEffect(() => {
+    if (!googleUser) {
+      setScreen('login')
+      return
+    }
+
+    setScreen((currentScreen) => (currentScreen === 'login' ? 'morning' : currentScreen))
+  }, [googleUser])
+
+  useEffect(() => {
+    if (!GOOGLE_CLIENT_ID) {
+      setAuthMessage('Add VITE_GOOGLE_CLIENT_ID to enable Google sign-in.')
+      return
+    }
+
+    let cancelled = false
+    const existingScript = document.querySelector(`script[src="${GOOGLE_SCRIPT_SRC}"]`)
+
+    const initializeGoogle = () => {
+      if (cancelled || !window.google?.accounts?.id || googleInitializedRef.current) return
+
+      window.google.accounts.id.initialize({
+        client_id: GOOGLE_CLIENT_ID,
+        callback: ({ credential }) => {
+          const payload = decodeJwtPayload(credential)
+
+          if (!payload) {
+            setAuthMessage('Google sign-in succeeded, but the profile could not be read.')
+            return
+          }
+
+          const nextUser = {
+            firstName: payload.given_name || payload.name?.split(' ')[0] || 'there',
+            fullName: payload.name || '',
+            email: payload.email || '',
+            picture: payload.picture || '',
+          }
+
+          localStorage.setItem(GOOGLE_STORAGE_KEY, JSON.stringify(nextUser))
+          setGoogleUser(nextUser)
+          setAuthMessage('')
+        },
+      })
+
+      if (window.google.accounts.oauth2) {
+        calendarTokenClientRef.current = window.google.accounts.oauth2.initTokenClient({
+          client_id: GOOGLE_CLIENT_ID,
+          scope: GOOGLE_CALENDAR_SCOPE,
+          callback: async (tokenResponse) => {
+            if (tokenResponse.error) {
+              setCalendarMessage('Calendar access was not granted.')
+              setCalendarLoading(false)
+              return
+            }
+
+            setCalendarToken(tokenResponse)
+            setCalendarAuthorized(true)
+            setCalendarMessage('')
+            setCalendarLoading(true)
+
+            try {
+              const response = await fetch(
+                'https://www.googleapis.com/calendar/v3/calendars/primary/events?maxResults=20&orderBy=startTime&singleEvents=true&timeMin=' +
+                  encodeURIComponent(currentWeekRange.start.toISOString()) +
+                  '&timeMax=' +
+                  encodeURIComponent(currentWeekRange.end.toISOString()),
+                {
+                  headers: {
+                    Authorization: `Bearer ${tokenResponse.access_token}`,
+                  },
+                },
+              )
+
+              if (!response.ok) {
+                throw new Error(`Calendar request failed with status ${response.status}`)
+              }
+
+              const data = await response.json()
+              setCalendarEvents(data.items ?? [])
+              if (!data.items?.length) {
+                setCalendarMessage('No events scheduled for this week.')
+              }
+            } catch {
+              setCalendarMessage('Unable to load your calendar right now.')
+            } finally {
+              setCalendarLoading(false)
+            }
+          },
+        })
+      }
+
+      googleInitializedRef.current = true
+      setAuthReady(true)
+    }
+
+    if (existingScript) {
+      if (window.google?.accounts?.id) {
+        initializeGoogle()
+      } else {
+        existingScript.addEventListener('load', initializeGoogle, { once: true })
+      }
+      return () => {
+        cancelled = true
+      }
+    }
+
+    const script = document.createElement('script')
+    script.src = GOOGLE_SCRIPT_SRC
+    script.async = true
+    script.defer = true
+    script.onload = initializeGoogle
+    script.onerror = () => {
+      if (!cancelled) setAuthMessage('Google sign-in failed to load. Please try again.')
+    }
+    document.head.appendChild(script)
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!authReady || !googleButtonRef.current || googleUser || screen !== 'login' || !window.google?.accounts?.id) {
+      return
+    }
+
+    googleButtonRef.current.innerHTML = ''
+    window.google.accounts.id.renderButton(googleButtonRef.current, {
+      theme: theme === 'dark' ? 'filled_black' : 'outline',
+      size: 'large',
+      text: 'signin_with',
+      shape: 'pill',
+      width: 260,
+    })
+  }, [authReady, googleUser, screen, theme])
 
   useEffect(() => {
     if (!sessionActive) return
@@ -284,6 +559,9 @@ export default function App() {
   const closestSpot = recommendedSpots[0] ?? null
   const chosenSpot = selectedSpot ?? closestSpot
   const mapsEmbedUrl = closestSpot ? buildGoogleMapsEmbedUrl(closestSpot.address) : ''
+  const displayName = googleUser?.firstName || 'there'
+  const currentWeekRange = useMemo(() => getWeekRange(), [])
+  const weekCalendar = useMemo(() => buildWeekCalendar(calendarEvents), [calendarEvents])
 
   useEffect(() => {
     if (!selectedSpot || !recommendedSpots.some((spot) => spot.id === selectedSpot.id)) {
@@ -320,6 +598,35 @@ export default function App() {
 
   const toggleBoolean = (key) => setFilters((prev) => ({ ...prev, [key]: !prev[key] }))
 
+  const connectGoogleCalendar = () => {
+    if (!calendarTokenClientRef.current) {
+      setCalendarMessage('Calendar setup is not ready yet.')
+      return
+    }
+
+    setCalendarLoading(true)
+    setCalendarMessage('')
+    calendarTokenClientRef.current.requestAccessToken({
+      prompt: calendarToken ? '' : 'consent',
+    })
+  }
+
+  const signOut = () => {
+    localStorage.removeItem(GOOGLE_STORAGE_KEY)
+    setGoogleUser(null)
+    setAuthMessage('')
+    setCalendarEvents([])
+    setCalendarMessage('')
+    setCalendarAuthorized(false)
+    if (calendarToken?.access_token && window.google?.accounts?.oauth2) {
+      window.google.accounts.oauth2.revoke(calendarToken.access_token)
+    }
+    setCalendarToken(null)
+    if (window.google?.accounts?.id) {
+      window.google.accounts.id.disableAutoSelect()
+    }
+  }
+
   return (
     <div className="app-shell">
       <a className="skip-link" href="#main">Skip to content</a>
@@ -335,42 +642,67 @@ export default function App() {
             <h1>StudySpot</h1>
           </div>
         </div>
-        <button
-          className="theme-toggle"
-          onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-          aria-label="Toggle theme"
-        >
-          {theme === 'dark' ? '☀️' : '🌙'}
-        </button>
+        <div className="topbar-actions">
+          {googleUser && (
+            <div className="user-chip" aria-label={`Signed in as ${googleUser.fullName || googleUser.email}`}>
+              {googleUser.picture ? <img src={googleUser.picture} alt="" /> : <span>{displayName.charAt(0)}</span>}
+              <strong>{displayName}</strong>
+            </div>
+          )}
+          {googleUser && (
+            <button className="ghost-btn" onClick={signOut}>Sign out</button>
+          )}
+          <button
+            className="theme-toggle"
+            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+            aria-label="Toggle theme"
+          >
+            {theme === 'dark' ? '☀️' : '🌙'}
+          </button>
+        </div>
       </header>
 
       <main id="main" className="workspace">
-        <aside className="journey-card">
-          <p className="eyebrow">Today&apos;s flow</p>
-          <div className="steps">
-            {['Morning', 'Preferences', 'Recommendation', 'Session'].map((label, index) => {
-              const screens = ['morning', 'preferences', 'recommendation', 'session']
-              const active = screens[index] === screen
-              const complete = screens.indexOf(screen) > index
-              return (
-                <div key={label} className={`step ${active ? 'active' : ''} ${complete ? 'complete' : ''}`}>
-                  <div className="step-dot">{index + 1}</div>
-                  <span>{label}</span>
-                </div>
-              )
-            })}
-          </div>
-        </aside>
+        {screen !== 'login' && (
+          <aside className="journey-card">
+            <p className="eyebrow">Today&apos;s flow</p>
+            <div className="steps">
+              {['Morning', 'Preferences', 'Recommendation', 'Session'].map((label, index) => {
+                const screens = ['morning', 'preferences', 'recommendation', 'session']
+                const active = screens[index] === screen
+                const complete = screens.indexOf(screen) > index
+                return (
+                  <div key={label} className={`step ${active ? 'active' : ''} ${complete ? 'complete' : ''}`}>
+                    <div className="step-dot">{index + 1}</div>
+                    <span>{label}</span>
+                  </div>
+                )
+              })}
+            </div>
+          </aside>
+        )}
 
         <section className="screen-panel">
+          {screen === 'login' && (
+            <div className="screen-grid login-grid">
+              <section className="login-card">
+                <p className="eyebrow">Welcome</p>
+                <h2>Welcome to StudySpot!</h2>
+                <p className="hero-text">Please log in to continue.</p>
+                {!googleUser && <div ref={googleButtonRef} className="google-button-slot" />}
+                {authMessage && <p className="status-text">{authMessage}</p>}
+              </section>
+            </div>
+          )}
+
           {screen === 'morning' && (
             <div className="screen-grid morning-grid">
               <section className="hero-card">
                 <div className="hero-copy">
                   <p className="eyebrow">Morning planning</p>
-                  <h2>{getGreeting()}, Layla</h2>
+                  <h2>{getGreeting()}, {displayName}</h2>
                   <p className="hero-text">
-                    You have 2 hours before class. 
+                    Welcome back{googleUser?.email ? `, ${googleUser.email}` : ''}. You have 2 hours before class.
                   </p>
                 </div>
                 <div className="hero-metrics">
@@ -414,11 +746,84 @@ export default function App() {
                 </div>
               </section>
 
-              <section className="insight-card">
+              <section className="insight-card auth-card">
                 <p className="eyebrow">Quick suggestion</p>
                 <h3>Best next move</h3>
-                <p>Start with “{tasks[0].title}” in a quiet indoor space so you can finish a full review block before class.</p>
+                <p>
+                  Start with “{tasks[0].title}” in a quiet indoor space so you can finish a full review block before
+                  class.
+                </p>
                 <button className="primary-btn" onClick={() => startTaskFlow(tasks[0])}>Start recommended task</button>
+              </section>
+
+              <section className="insight-card calendar-card">
+                <div className="calendar-card-head">
+                  <div>
+                    <p className="eyebrow">Google Calendar</p>
+                    <h3>This week</h3>
+                    <p>
+                      Connect your Google Calendar to preview your weekly schedule for{' '}
+                      {formatWeekRangeLabel(currentWeekRange.start, currentWeekRange.end)}.
+                    </p>
+                  </div>
+                  {calendarAuthorized && (
+                    <a
+                      className="secondary-btn calendar-open-link"
+                      href={GOOGLE_CALENDAR_WEEK_URL}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Open Google Calendar
+                    </a>
+                  )}
+                </div>
+                {!calendarAuthorized && (
+                  <button className="secondary-btn" onClick={connectGoogleCalendar} disabled={calendarLoading}>
+                    {calendarLoading ? 'Connecting...' : 'Connect Google Calendar'}
+                  </button>
+                )}
+                {calendarAuthorized && (
+                  <button className="ghost-btn" onClick={connectGoogleCalendar} disabled={calendarLoading}>
+                    {calendarLoading ? 'Refreshing...' : 'Refresh events'}
+                  </button>
+                )}
+                {calendarAuthorized && (
+                  <a
+                    className="calendar-preview-link"
+                    href={GOOGLE_CALENDAR_WEEK_URL}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    <div className="calendar-preview-shell">
+                      <div className="calendar-preview-bar">
+                        <span>Calendar snapshot</span>
+                      </div>
+                      <div className="calendar-week-grid">
+                        {weekCalendar.map((day) => (
+                          <article key={day.key} className="calendar-day-column">
+                            <div className="calendar-day-header">
+                              <span>{day.label}</span>
+                              <strong>{day.dayNumber}</strong>
+                            </div>
+                            {day.events.length > 0 ? (
+                              <div className="calendar-event-list">
+                                {day.events.map((event) => (
+                                  <article key={event.id} className="calendar-event-item">
+                                    <strong>{event.summary || 'Untitled event'}</strong>
+                                    <span>{formatCalendarEventTime(event.start?.dateTime || event.start?.date)}</span>
+                                  </article>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="calendar-empty-day">Free day</p>
+                            )}
+                          </article>
+                        ))}
+                      </div>
+                    </div>
+                  </a>
+                )}
+                {calendarMessage && <p className="status-text">{calendarMessage}</p>}
               </section>
             </div>
           )}
