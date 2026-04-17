@@ -5,6 +5,7 @@ const GOOGLE_SCRIPT_SRC = 'https://accounts.google.com/gsi/client'
 const GOOGLE_STORAGE_KEY = 'studyspot.googleUser'
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID
 const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.readonly'
+const GOOGLE_CALENDAR_WEEK_URL = 'https://calendar.google.com/calendar/u/0/r/week'
 
 const tasks = [
   {
@@ -270,9 +271,28 @@ function formatDayNumber(date) {
   return date.toLocaleDateString([], { day: 'numeric' })
 }
 
+function getLocalDateKey(date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function parseCalendarDateValue(rawValue) {
+  if (!rawValue) return null
+
+  // Google all-day events use YYYY-MM-DD. Parse those in local time to avoid UTC day shifts.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(rawValue)) {
+    const [year, month, day] = rawValue.split('-').map(Number)
+    return new Date(year, month - 1, day)
+  }
+
+  return new Date(rawValue)
+}
+
 function getEventStartDate(event) {
   const rawValue = event.start?.dateTime || event.start?.date
-  const eventDate = rawValue ? new Date(rawValue) : null
+  const eventDate = parseCalendarDateValue(rawValue)
   return eventDate && !Number.isNaN(eventDate.getTime()) ? eventDate : null
 }
 
@@ -282,11 +302,11 @@ function buildWeekCalendar(events, referenceDate = new Date()) {
   return Array.from({ length: 7 }, (_, index) => {
     const dayDate = new Date(start)
     dayDate.setDate(start.getDate() + index)
-    const dayKey = dayDate.toISOString().slice(0, 10)
+    const dayKey = getLocalDateKey(dayDate)
 
     const dayEvents = events.filter((event) => {
       const eventDate = getEventStartDate(event)
-      return eventDate && eventDate.toISOString().slice(0, 10) === dayKey
+      return eventDate && getLocalDateKey(eventDate) === dayKey
     })
 
     return {
@@ -732,12 +752,26 @@ export default function App() {
               </section>
 
               <section className="insight-card calendar-card">
-                <p className="eyebrow">Google Calendar</p>
-                <h3>This week</h3>
-                <p>
-                  Connect your Google Calendar to preview your weekly schedule for{' '}
-                  {formatWeekRangeLabel(currentWeekRange.start, currentWeekRange.end)}.
-                </p>
+                <div className="calendar-card-head">
+                  <div>
+                    <p className="eyebrow">Google Calendar</p>
+                    <h3>This week</h3>
+                    <p>
+                      Connect your Google Calendar to preview your weekly schedule for{' '}
+                      {formatWeekRangeLabel(currentWeekRange.start, currentWeekRange.end)}.
+                    </p>
+                  </div>
+                  {calendarAuthorized && (
+                    <a
+                      className="secondary-btn calendar-open-link"
+                      href={GOOGLE_CALENDAR_WEEK_URL}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Open Google Calendar
+                    </a>
+                  )}
+                </div>
                 {!calendarAuthorized && (
                   <button className="secondary-btn" onClick={connectGoogleCalendar} disabled={calendarLoading}>
                     {calendarLoading ? 'Connecting...' : 'Connect Google Calendar'}
@@ -749,28 +783,41 @@ export default function App() {
                   </button>
                 )}
                 {calendarAuthorized && (
-                  <div className="calendar-week-grid">
-                    {weekCalendar.map((day) => (
-                      <article key={day.key} className="calendar-day-column">
-                        <div className="calendar-day-header">
-                          <span>{day.label}</span>
-                          <strong>{day.dayNumber}</strong>
-                        </div>
-                        {day.events.length > 0 ? (
-                          <div className="calendar-event-list">
-                            {day.events.map((event) => (
-                              <article key={event.id} className="calendar-event-item">
-                                <strong>{event.summary || 'Untitled event'}</strong>
-                                <span>{formatCalendarEventTime(event.start?.dateTime || event.start?.date)}</span>
-                              </article>
-                            ))}
-                          </div>
-                        ) : (
-                          <p className="calendar-empty-day">Free day</p>
-                        )}
-                      </article>
-                    ))}
-                  </div>
+                  <a
+                    className="calendar-preview-link"
+                    href={GOOGLE_CALENDAR_WEEK_URL}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    <div className="calendar-preview-shell">
+                      <div className="calendar-preview-bar">
+                        <span>Calendar snapshot</span>
+                        <strong>Click to open full calendar</strong>
+                      </div>
+                      <div className="calendar-week-grid">
+                        {weekCalendar.map((day) => (
+                          <article key={day.key} className="calendar-day-column">
+                            <div className="calendar-day-header">
+                              <span>{day.label}</span>
+                              <strong>{day.dayNumber}</strong>
+                            </div>
+                            {day.events.length > 0 ? (
+                              <div className="calendar-event-list">
+                                {day.events.map((event) => (
+                                  <article key={event.id} className="calendar-event-item">
+                                    <strong>{event.summary || 'Untitled event'}</strong>
+                                    <span>{formatCalendarEventTime(event.start?.dateTime || event.start?.date)}</span>
+                                  </article>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="calendar-empty-day">Free day</p>
+                            )}
+                          </article>
+                        ))}
+                      </div>
+                    </div>
+                  </a>
                 )}
                 {calendarMessage && <p className="status-text">{calendarMessage}</p>}
               </section>
