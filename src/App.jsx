@@ -3,11 +3,12 @@ import './index.css'
 
 const GOOGLE_SCRIPT_SRC = 'https://accounts.google.com/gsi/client'
 const GOOGLE_STORAGE_KEY = 'studyspot.googleUser'
+const TASKS_STORAGE_KEY = 'studyspot.tasks'
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID
 const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.readonly'
 const GOOGLE_CALENDAR_WEEK_URL = 'https://calendar.google.com/calendar/u/0/r/week'
 
-const tasks = [
+const initialTasks = [
   {
     id: 1,
     title: 'Review lecture notes',
@@ -226,6 +227,30 @@ function buildGoogleMapsEmbedUrl(query) {
   return `https://www.google.com/maps?q=${encodeURIComponent(query)}&output=embed`
 }
 
+function formatTaskDueDate(value) {
+  if (!value) return ''
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const [year, month, day] = value.split('-').map(Number)
+    const parsed = new Date(year, month - 1, day)
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+
+    const tomorrow = new Date(today)
+    tomorrow.setDate(today.getDate() + 1)
+
+    const dueDate = new Date(parsed)
+    dueDate.setHours(0, 0, 0, 0)
+
+    if (dueDate.getTime() === today.getTime()) return 'Due Today'
+    if (dueDate.getTime() === tomorrow.getTime()) return 'Due Tomorrow'
+
+    return `Due ${parsed.toLocaleDateString([], { month: 'numeric', day: 'numeric' })}`
+  }
+
+  return value
+}
+
 function getWeekRange(referenceDate = new Date()) {
   const start = new Date(referenceDate)
   const day = start.getDay()
@@ -348,10 +373,29 @@ function getStoredGoogleUser() {
   }
 }
 
+function getStoredTasks() {
+  try {
+    const raw = localStorage.getItem(TASKS_STORAGE_KEY)
+    return raw ? JSON.parse(raw) : initialTasks
+  } catch {
+    return initialTasks
+  }
+}
+
 export default function App() {
   const [theme, setTheme] = useState('light')
   const [screen, setScreen] = useState('morning')
-  const [selectedTask, setSelectedTask] = useState(tasks[0])
+  const [tasks, setTasks] = useState(() => getStoredTasks())
+  const [selectedTask, setSelectedTask] = useState(() => getStoredTasks()[0] ?? null)
+  const [taskFormOpen, setTaskFormOpen] = useState(false)
+  const [newTask, setNewTask] = useState({
+    title: '',
+    course: '',
+    due: '',
+    duration: 1,
+    type: 'Homework',
+    energy: 'medium',
+  })
   const [filters, setFilters] = useState({
     noise: 'Low',
     setting: 'Indoor',
@@ -390,6 +434,10 @@ export default function App() {
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme)
   }, [theme])
+
+  useEffect(() => {
+    localStorage.setItem(TASKS_STORAGE_KEY, JSON.stringify(tasks))
+  }, [tasks])
 
   useEffect(() => {
     if (!googleUser) {
@@ -564,6 +612,17 @@ export default function App() {
   const weekCalendar = useMemo(() => buildWeekCalendar(calendarEvents), [calendarEvents])
 
   useEffect(() => {
+    if (!tasks.length) {
+      setSelectedTask(null)
+      return
+    }
+
+    if (!selectedTask || !tasks.some((task) => task.id === selectedTask.id)) {
+      setSelectedTask(tasks[0])
+    }
+  }, [tasks, selectedTask])
+
+  useEffect(() => {
     if (!selectedSpot || !recommendedSpots.some((spot) => spot.id === selectedSpot.id)) {
       setSelectedSpot(recommendedSpots[0] ?? null)
     }
@@ -572,6 +631,37 @@ export default function App() {
   const startTaskFlow = (task) => {
     setSelectedTask(task)
     setScreen('preferences')
+  }
+
+  const addTask = (event) => {
+    event.preventDefault()
+
+    if (!newTask.title.trim() || !newTask.course.trim() || !newTask.due.trim()) return
+
+    const createdTask = {
+      id: Date.now(),
+      title: newTask.title.trim(),
+      course: newTask.course.trim(),
+      due: newTask.due.trim(),
+      duration: Number(newTask.duration),
+      type: newTask.type,
+      energy: newTask.energy,
+    }
+
+    setTasks((prev) => [createdTask, ...prev])
+    setNewTask({
+      title: '',
+      course: '',
+      due: '',
+      duration: 1,
+      type: 'Homework',
+      energy: 'medium',
+    })
+    setTaskFormOpen(false)
+  }
+
+  const deleteTask = (taskId) => {
+    setTasks((prev) => prev.filter((task) => task.id !== taskId))
   }
 
   const startSession = () => {
@@ -662,6 +752,68 @@ export default function App() {
         </div>
       </header>
 
+      {taskFormOpen && (
+        <div className="modal-backdrop" onClick={() => setTaskFormOpen(false)}>
+          <div className="modal-card" onClick={(event) => event.stopPropagation()}>
+            <div className="section-head">
+              <div>
+                <p className="eyebrow">New task</p>
+                <h3>Add a recommended task</h3>
+              </div>
+              <button className="ghost-btn" onClick={() => setTaskFormOpen(false)}>Close</button>
+            </div>
+            <form className="task-form" onSubmit={addTask}>
+              <input
+                type="text"
+                placeholder="Task title"
+                value={newTask.title}
+                onChange={(event) => setNewTask((prev) => ({ ...prev, title: event.target.value }))}
+                required
+              />
+              <input
+                type="text"
+                placeholder="Course"
+                value={newTask.course}
+                onChange={(event) => setNewTask((prev) => ({ ...prev, course: event.target.value }))}
+                required
+              />
+              <input
+                type="date"
+                value={newTask.due}
+                onChange={(event) => setNewTask((prev) => ({ ...prev, due: event.target.value }))}
+                required
+              />
+              <div className="task-form-row">
+                <label>
+                  <span>Hours</span>
+                  <input
+                    type="number"
+                    min="1"
+                    max="8"
+                    value={newTask.duration}
+                    onChange={(event) => setNewTask((prev) => ({ ...prev, duration: event.target.value }))}
+                  />
+                </label>
+                <label>
+                  <span>Type</span>
+                  <select
+                    value={newTask.type}
+                    onChange={(event) => setNewTask((prev) => ({ ...prev, type: event.target.value }))}
+                  >
+                    <option>Homework</option>
+                    <option>Reading</option>
+                    <option>Writing</option>
+                    <option>Project</option>
+                    <option>Study</option>
+                  </select>
+                </label>
+              </div>
+              <button className="primary-btn" type="submit">Save task</button>
+            </form>
+          </div>
+        </div>
+      )}
+
       <main id="main" className="workspace">
         {screen !== 'login' && (
           <aside className="journey-card">
@@ -727,22 +879,37 @@ export default function App() {
                     <p className="eyebrow">Recommended tasks</p>
                     <h3>Choose what to start</h3>
                   </div>
-                  <button className="ghost-btn">View all</button>
+                  <button className="ghost-btn" onClick={() => setTaskFormOpen((open) => !open)}>
+                    Add task
+                  </button>
                 </div>
                 <div className="task-list">
-                  {tasks.map((task) => (
-                    <button key={task.id} className="task-item" onClick={() => startTaskFlow(task)}>
-                      <div>
-                        <span className="task-course">{task.course}</span>
-                        <h4>{task.title}</h4>
-                        <p>{task.due}</p>
+                  {tasks.length > 0 ? (
+                    tasks.map((task) => (
+                      <div key={task.id} className="task-entry">
+                        <button className="task-item" onClick={() => startTaskFlow(task)}>
+                          <div>
+                            <span className="task-course">{task.course}</span>
+                            <h4>{task.title}</h4>
+                            <p>{formatTaskDueDate(task.due)}</p>
+                          </div>
+                          <div className="task-meta">
+                            <span>{task.duration}h</span>
+                            <span>{task.type}</span>
+                          </div>
+                        </button>
+                        <button
+                          className="task-delete-btn"
+                          onClick={() => deleteTask(task.id)}
+                          aria-label={`Delete ${task.title}`}
+                        >
+                          Delete
+                        </button>
                       </div>
-                      <div className="task-meta">
-                        <span>{task.duration}h</span>
-                        <span>{task.type}</span>
-                      </div>
-                    </button>
-                  ))}
+                    ))
+                  ) : (
+                    <p className="status-text">No tasks yet. Add one to get started.</p>
+                  )}
                 </div>
               </section>
 
@@ -750,10 +917,13 @@ export default function App() {
                 <p className="eyebrow">Quick suggestion</p>
                 <h3>Best next move</h3>
                 <p>
-                  Start with “{tasks[0].title}” in a quiet indoor space so you can finish a full review block before
-                  class.
+                  {tasks.length > 0
+                    ? `Start with “${tasks[0].title}” in a quiet indoor space so you can finish a full review block before class.`
+                    : 'Add a task to get a study suggestion here.'}
                 </p>
-                <button className="primary-btn" onClick={() => startTaskFlow(tasks[0])}>Start recommended task</button>
+                {tasks.length > 0 && (
+                  <button className="primary-btn" onClick={() => startTaskFlow(tasks[0])}>Start recommended task</button>
+                )}
               </section>
 
               <section className="insight-card calendar-card">
