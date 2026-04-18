@@ -347,12 +347,58 @@ button { cursor: pointer; }
   gap: var(--space-4);
   flex-wrap: wrap;
 }
+.session-action-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-left: auto;
+}
+.session-action-row .secondary-btn {
+  margin-top: 0;
+}
 .task-list,
 .preference-sections,
 .toggle-grid,
 .mini-grid {
   display: grid;
   gap: var(--space-4);
+}
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+.metrics-card {
+  grid-column: 1 / -1;
+}
+.metric-item {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-4);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+}
+.metric-item span {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+.metric-label-white {
+  color: #000000;
+  font-weight: 500;
+  font-family: var(--font-body);
+}
+.metric-item strong {
+  font-size: var(--text-xl);
+  line-height: 1;
+}
+.metric-item small {
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+}
+.metric-wide {
+  grid-column: 1 / -1;
 }
 .task-form {
   display: grid;
@@ -725,6 +771,7 @@ button { cursor: pointer; }
 .recommendation-map {
   min-height: 180px;
   margin-top: var(--space-3);
+  border: 0;
 }
 .preview-badges span,
 .feedback-btn {
@@ -747,6 +794,25 @@ button { cursor: pointer; }
 }
 .recommendation-item.featured {
   background: linear-gradient(180deg, var(--color-primary-soft), transparent), var(--color-surface);
+}
+.feedback-btn.selected {
+  background: linear-gradient(180deg, var(--color-primary-soft), transparent), var(--color-surface);
+  border-color: rgba(11, 110, 116, 0.18);
+}
+[data-theme='dark'] .recommendation-item.featured {
+  background:
+    linear-gradient(180deg, rgba(117, 197, 199, 0.32), rgba(117, 197, 199, 0.08)),
+    var(--color-surface);
+  border-color: rgba(117, 197, 199, 0.5);
+  box-shadow: 0 0 0 1px rgba(117, 197, 199, 0.14), 0 14px 34px rgba(0, 0, 0, 0.35);
+}
+[data-theme='dark'] .feedback-btn.selected {
+  background:
+    linear-gradient(180deg, rgba(117, 197, 199, 0.36), rgba(117, 197, 199, 0.1)),
+    var(--color-surface);
+  border-color: rgba(117, 197, 199, 0.55);
+  color: #ffffff;
+  box-shadow: 0 0 0 1px rgba(117, 197, 199, 0.16);
 }
 .skeleton-view {
   display: grid;
@@ -812,6 +878,12 @@ button { cursor: pointer; }
   .task-form-row { grid-template-columns: 1fr; }
   .location-actions,
   .map-actions { flex-direction: column; }
+  .session-action-row {
+    width: 100%;
+    margin-left: 0;
+    justify-content: flex-start;
+  }
+  .metrics-grid { grid-template-columns: 1fr; }
   .calendar-preview-bar,
   .calendar-card-head { align-items: flex-start; }
   .topbar,

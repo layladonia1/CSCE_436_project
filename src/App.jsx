@@ -4,6 +4,8 @@ import './index.css'
 const GOOGLE_SCRIPT_SRC = 'https://accounts.google.com/gsi/client'
 const GOOGLE_STORAGE_KEY = 'studyspot.googleUser'
 const TASKS_STORAGE_KEY = 'studyspot.tasks'
+const METRICS_STORAGE_KEY = 'studyspot.metrics'
+const METRICS_STORAGE_PREFIX = 'studyspot.metrics.'
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID
 const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.readonly'
 const GOOGLE_CALENDAR_WEEK_URL = 'https://calendar.google.com/calendar/u/0/r/week'
@@ -43,6 +45,8 @@ const spots = [
     id: 1,
     name: 'Evans Library Quiet Floor',
     address: 'Sterling C. Evans Library, 400 Spence St, College Station, TX 77843',
+    latitude: 30.6188,
+    longitude: -96.3418,
     vibe: 'Silent focus',
     noise: 'Low',
     outlet: true,
@@ -57,6 +61,8 @@ const spots = [
     id: 2,
     name: 'MSC Lounge',
     address: 'Memorial Student Center, 275 Joe Routt Blvd, College Station, TX 77843',
+    latitude: 30.6097,
+    longitude: -96.3409,
     vibe: 'Casual and flexible',
     noise: 'Medium',
     outlet: true,
@@ -71,6 +77,8 @@ const spots = [
     id: 3,
     name: 'Zachry Collaboration Zone',
     address: 'Zachry Engineering Education Complex, 125 Spence St, College Station, TX 77843',
+    latitude: 30.6226,
+    longitude: -96.3365,
     vibe: 'Productive buzz',
     noise: 'Medium',
     outlet: true,
@@ -85,6 +93,8 @@ const spots = [
     id: 4,
     name: 'Academic Plaza Outdoor Tables',
     address: 'Academic Plaza, 766 Military Walk, College Station, TX 77840',
+    latitude: 30.6125,
+    longitude: -96.3416,
     vibe: 'Fresh air reset',
     noise: 'Medium',
     outlet: false,
@@ -99,6 +109,8 @@ const spots = [
     id: 5,
     name: 'Zachry HPE Tech Deck',
     address: 'Zachry Engineering Education Complex, 125 Spence St, College Station, TX 77843',
+    latitude: 30.6232,
+    longitude: -96.3368,
     vibe: 'Greenery with city views',
     noise: 'Low',
     outlet: false,
@@ -113,6 +125,8 @@ const spots = [
     id: 6,
     name: 'Quadbucks - Upper Floors',
     address: 'Starbucks - The Quad, 546 Coke St, College Station, TX 77843',
+    latitude: 30.6099,
+    longitude: -96.3367,
     vibe: 'Cafe vibes',
     noise: 'Medium',
     outlet: true,
@@ -127,6 +141,8 @@ const spots = [
     id: 7,
     name: 'ETB',
     address: 'Emerging Technology Building, 101 Bizzell St, College Station, TX 77843',
+    latitude: 30.6267,
+    longitude: -96.3359,
     vibe: 'Study Chatter',
     noise: 'Medium',
     outlet: true,
@@ -141,6 +157,8 @@ const spots = [
     id: 8,
     name: 'Architecture Building',
     address: 'Department of Architecture, Center Building A, Langford Architecture Bldg, 798 Ross St #422, College Station, TX 77840',
+    latitude: 30.6201,
+    longitude: -96.3387,
     vibe: 'Spacious',
     noise: 'Medium',
     outlet: true,
@@ -155,6 +173,8 @@ const spots = [
     id: 9,
     name: 'Zachbucks',
     address: 'Zachry Engineering Education Complex, 125 Spence St, College Station, TX 77843',
+    latitude: 30.6226,
+    longitude: -96.3365,
     vibe: 'Cafe vibes',
     noise: 'Medium',
     outlet: true,
@@ -164,6 +184,22 @@ const spots = [
     lateHours: false,
     comfort: 'High',
     reason: 'Best for a casual study environment with a nearby cafe.',
+  },
+  {
+    id: 10,
+    name: 'Evans Library Annex - 5th Floor',
+    address: 'Sterling C. Evans Library, 400 Spence St, College Station, TX 77843',
+    latitude: 30.6192,
+    longitude: -96.3414,
+    vibe: 'Solo study',
+    noise: 'Low',
+    outlet: true,
+    groupFriendly: false,
+    indoor: true,
+    nearCoffee: false,
+    lateHours: true,
+    comfort: 'High',
+    reason: 'Best for independent learning with access to library resources.',
   },
 ]
 
@@ -198,7 +234,28 @@ function matchesFilters(spot, filters) {
   return true
 }
 
-function recommendSpots(filters) {
+function calculateDistanceMiles(startLat, startLng, endLat, endLng) {
+  const earthRadiusMiles = 3958.8
+  const lat1 = (startLat * Math.PI) / 180
+  const lat2 = (endLat * Math.PI) / 180
+  const latDiff = ((endLat - startLat) * Math.PI) / 180
+  const lngDiff = ((endLng - startLng) * Math.PI) / 180
+
+  const a =
+    Math.sin(latDiff / 2) * Math.sin(latDiff / 2) +
+    Math.cos(lat1) * Math.cos(lat2) *
+    Math.sin(lngDiff / 2) * Math.sin(lngDiff / 2)
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+  return earthRadiusMiles * c
+}
+
+function formatDistanceLabel(distance) {
+  if (distance === null || Number.isNaN(distance)) return ''
+  if (distance < 0.1) return 'Less than 0.1 miles away'
+  return `${distance.toFixed(1)} miles away`
+}
+
+function recommendSpots(filters, userLocation = null) {
   const scored = spots.map((spot) => {
     let score = 0
     if (filters.noise && spot.noise === filters.noise) score += 2
@@ -208,13 +265,26 @@ function recommendSpots(filters) {
     if (filters.groupFriendly && spot.groupFriendly) score += 1
     if (filters.nearCoffee && spot.nearCoffee) score += 1
     if (filters.lateHours && spot.lateHours) score += 1
-    return { ...spot, score }
+    const distance = userLocation
+      ? calculateDistanceMiles(userLocation.latitude, userLocation.longitude, spot.latitude, spot.longitude)
+      : null
+    return { ...spot, score, distance }
   })
 
   const exactMatches = scored.filter((spot) => matchesFilters(spot, filters))
   const ranked = exactMatches.length ? exactMatches : scored
 
-  return ranked.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name)).slice(0, 3)
+  return ranked
+    .sort((a, b) => {
+      if (a.distance !== null && b.distance !== null && a.distance !== b.distance) {
+        return a.distance - b.distance
+      }
+      if (a.distance !== null && b.distance === null) return -1
+      if (a.distance === null && b.distance !== null) return 1
+      if (b.score !== a.score) return b.score - a.score
+      return a.name.localeCompare(b.name)
+    })
+    .slice(0, 3)
 }
 
 function formatTime(seconds) {
@@ -382,12 +452,60 @@ function getStoredTasks() {
   }
 }
 
+function getDefaultMetrics() {
+  return {
+    taskRecommendationImpressions: 0,
+    taskRecommendationsAccepted: 0,
+    taskDecisionTotalSeconds: 0,
+    taskDecisionCount: 0,
+    taskCompletions: 0,
+    spotRecommendationImpressions: 0,
+    spotRecommendationsAccepted: 0,
+  }
+}
+
+function getMetricsStorageKey(user) {
+  const identifier = user?.id || user?.email || user?.fullName || user?.firstName
+  if (!identifier) return null
+
+  return `${METRICS_STORAGE_PREFIX}${identifier.toLowerCase().trim().replace(/[^a-z0-9._-]+/g, '_')}`
+}
+
+function getStoredMetricsForUser(user) {
+  try {
+    const userKey = getMetricsStorageKey(user)
+    if (userKey) {
+      const userRaw = localStorage.getItem(userKey)
+      if (userRaw) {
+        return { ...getDefaultMetrics(), ...JSON.parse(userRaw) }
+      }
+    }
+
+    const legacyRaw = localStorage.getItem(METRICS_STORAGE_KEY)
+    if (legacyRaw) {
+      return { ...getDefaultMetrics(), ...JSON.parse(legacyRaw) }
+    }
+  } catch {
+    return getDefaultMetrics()
+  }
+
+  return getDefaultMetrics()
+}
+
+function saveMetricsForUser(user, metrics) {
+  const userKey = getMetricsStorageKey(user)
+  if (!userKey) return
+
+  localStorage.setItem(userKey, JSON.stringify(metrics))
+}
+
 export default function App() {
   const [theme, setTheme] = useState('light')
   const [screen, setScreen] = useState('morning')
   const [tasks, setTasks] = useState(() => getStoredTasks())
   const [selectedTask, setSelectedTask] = useState(() => getStoredTasks()[0] ?? null)
   const [taskFormOpen, setTaskFormOpen] = useState(false)
+  const [metrics, setMetrics] = useState(() => getStoredMetricsForUser(getStoredGoogleUser()))
   const [newTask, setNewTask] = useState({
     title: '',
     course: '',
@@ -404,6 +522,9 @@ export default function App() {
     nearCoffee: false,
     lateHours: true,
   })
+  const [locationInput, setLocationInput] = useState('')
+  const [locationStatus, setLocationStatus] = useState('')
+  const [userLocation, setUserLocation] = useState(null)
   const [selectedSpot, setSelectedSpot] = useState(null)
   const [studyHours, setStudyHours] = useState(2)
   const [mode, setMode] = useState('focus')
@@ -423,6 +544,9 @@ export default function App() {
   const googleButtonRef = useRef(null)
   const googleInitializedRef = useRef(false)
   const calendarTokenClientRef = useRef(null)
+  const taskDecisionStartRef = useRef(null)
+  const sessionCountsAsTaskCompletionRef = useRef(false)
+  const metricsHydratingRef = useRef(false)
 
   useEffect(() => {
     const media = window.matchMedia('(prefers-color-scheme: dark)')
@@ -442,11 +566,27 @@ export default function App() {
   useEffect(() => {
     if (!googleUser) {
       setScreen('login')
+      setMetrics(getDefaultMetrics())
+      metricsHydratingRef.current = false
       return
     }
 
     setScreen((currentScreen) => (currentScreen === 'login' ? 'morning' : currentScreen))
   }, [googleUser])
+
+  useEffect(() => {
+    if (!googleUser) return
+    metricsHydratingRef.current = true
+    setMetrics(getStoredMetricsForUser(googleUser))
+  }, [googleUser])
+
+  useEffect(() => {
+    if (!googleUser || metricsHydratingRef.current) {
+      metricsHydratingRef.current = false
+      return
+    }
+    saveMetricsForUser(googleUser, metrics)
+  }, [googleUser, metrics])
 
   useEffect(() => {
     if (!GOOGLE_CLIENT_ID) {
@@ -471,6 +611,7 @@ export default function App() {
           }
 
           const nextUser = {
+            id: payload.sub || '',
             firstName: payload.given_name || payload.name?.split(' ')[0] || 'there',
             fullName: payload.name || '',
             email: payload.email || '',
@@ -603,13 +744,63 @@ export default function App() {
     }
   }, [cycleSeconds, mode])
 
-  const recommendedSpots = useMemo(() => recommendSpots(filters), [filters])
+  const requestCurrentLocation = () => {
+    if (!navigator.geolocation) {
+      setLocationStatus('Location access is not supported in this browser.')
+      return
+    }
+
+    setLocationStatus('Finding your current location...')
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const { latitude, longitude } = position.coords
+        setUserLocation({ latitude, longitude })
+        setLocationInput('Current location')
+        setLocationStatus('Current location added.')
+      },
+      (error) => {
+        if (error.code === error.PERMISSION_DENIED) {
+          setLocationStatus('Location permission was denied.')
+          return
+        }
+        if (error.code === error.POSITION_UNAVAILABLE) {
+          setLocationStatus('Current location could not be found.')
+          return
+        }
+        if (error.code === error.TIMEOUT) {
+          setLocationStatus('Location request timed out.')
+          return
+        }
+        setLocationStatus('Location could not be loaded.')
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0,
+      },
+    )
+  }
+
+  const recommendedSpots = useMemo(() => recommendSpots(filters, userLocation), [filters, userLocation])
   const closestSpot = recommendedSpots[0] ?? null
   const chosenSpot = selectedSpot ?? closestSpot
   const mapsEmbedUrl = closestSpot ? buildGoogleMapsEmbedUrl(closestSpot.address) : ''
   const displayName = googleUser?.firstName || 'there'
   const currentWeekRange = useMemo(() => getWeekRange(), [])
   const weekCalendar = useMemo(() => buildWeekCalendar(calendarEvents), [calendarEvents])
+  const taskAcceptanceRate = metrics.taskRecommendationImpressions > 0
+    ? metrics.taskRecommendationsAccepted / metrics.taskRecommendationImpressions
+    : 0
+  const taskCompletionRate = metrics.taskRecommendationsAccepted > 0
+    ? metrics.taskCompletions / metrics.taskRecommendationsAccepted
+    : 0
+  const spotAcceptanceRate = metrics.spotRecommendationImpressions > 0
+    ? metrics.spotRecommendationsAccepted / metrics.spotRecommendationImpressions
+    : 0
+  const avgTaskDecisionSeconds = metrics.taskDecisionCount > 0
+    ? metrics.taskDecisionTotalSeconds / metrics.taskDecisionCount
+    : 0
 
   useEffect(() => {
     if (!tasks.length) {
@@ -628,7 +819,45 @@ export default function App() {
     }
   }, [recommendedSpots, selectedSpot])
 
+  useEffect(() => {
+    if (screen !== 'morning' || !googleUser) {
+      taskDecisionStartRef.current = null
+      return
+    }
+
+    if (!tasks.length) {
+      taskDecisionStartRef.current = null
+      return
+    }
+
+    taskDecisionStartRef.current = Date.now()
+    setMetrics((prev) => ({
+      ...prev,
+      taskRecommendationImpressions: prev.taskRecommendationImpressions + 1,
+    }))
+  }, [screen, googleUser, tasks.length])
+
+  useEffect(() => {
+    if (screen !== 'recommendation' || !googleUser) return
+
+    setMetrics((prev) => ({
+      ...prev,
+      spotRecommendationImpressions: prev.spotRecommendationImpressions + 1,
+    }))
+  }, [screen, googleUser])
+
   const startTaskFlow = (task) => {
+    if (taskDecisionStartRef.current) {
+      const decisionSeconds = Math.max(0, Math.round((Date.now() - taskDecisionStartRef.current) / 1000))
+      setMetrics((prev) => ({
+        ...prev,
+        taskRecommendationsAccepted: prev.taskRecommendationsAccepted + 1,
+        taskDecisionTotalSeconds: prev.taskDecisionTotalSeconds + decisionSeconds,
+        taskDecisionCount: prev.taskDecisionCount + 1,
+      }))
+      taskDecisionStartRef.current = null
+    }
+
     setSelectedTask(task)
     setScreen('preferences')
   }
@@ -665,6 +894,14 @@ export default function App() {
   }
 
   const startSession = () => {
+    if (screen === 'recommendation' && closestSpot && chosenSpot?.id === closestSpot.id) {
+      setMetrics((prev) => ({
+        ...prev,
+        spotRecommendationsAccepted: prev.spotRecommendationsAccepted + 1,
+      }))
+    }
+
+    sessionCountsAsTaskCompletionRef.current = true
     setScreen('session')
     setMode('focus')
     setSecondsLeft(50 * 60)
@@ -683,6 +920,13 @@ export default function App() {
   const completeSession = () => {
     setSessionActive(false)
     clearInterval(intervalRef.current)
+    if (sessionCountsAsTaskCompletionRef.current) {
+      setMetrics((prev) => ({
+        ...prev,
+        taskCompletions: prev.taskCompletions + 1,
+      }))
+      sessionCountsAsTaskCompletionRef.current = false
+    }
     setScreen('morning')
   }
 
@@ -995,6 +1239,35 @@ export default function App() {
                 )}
                 {calendarMessage && <p className="status-text">{calendarMessage}</p>}
               </section>
+
+              <section className="insight-card metrics-card">
+                <p className="eyebrow">Tracking</p>
+                <h3>Metrics</h3>
+                <p className="metrics-sync-note">Saved to your signed-in account.</p>
+                <div className="metrics-grid">
+                  <div className="metric-item">
+                    <span className="metric-label-white">Task Recommendations Accepted</span>
+                    <strong>{Math.round(taskAcceptanceRate * 100)}%</strong>
+                    <small>{metrics.taskRecommendationsAccepted} of {metrics.taskRecommendationImpressions || 0}</small>
+                  </div>
+                  <div className="metric-item">
+                    <span className="metric-label-white">Study Spot Recommendations Accepted</span>
+                    <strong>{Math.round(spotAcceptanceRate * 100)}%</strong>
+                    <small>{metrics.spotRecommendationsAccepted} of {metrics.spotRecommendationImpressions || 0}</small>
+                    <small>Counts only when the top recommendation is chosen</small>
+                  </div>
+                  <div className="metric-item">
+                    <span className="metric-label-white">Time to Choose a Task</span>
+                    <strong>{formatTime(Math.round(avgTaskDecisionSeconds))}</strong>
+                    <small>Averaged across all tasks</small>
+                  </div>
+                  <div className="metric-item">
+                    <span className="metric-label-white">Task Completion Rate</span>
+                    <strong>{Math.round(taskCompletionRate * 100)}%</strong>
+                    <small>{metrics.taskCompletions} completed of {metrics.taskRecommendationsAccepted || 0} started</small>
+                  </div>
+                </div>
+              </section>
             </div>
           )}
 
@@ -1013,6 +1286,12 @@ export default function App() {
                   <strong>{selectedTask.title}</strong>
                   <em>{selectedTask.course} · {selectedTask.duration} hour plan</em>
                 </div>
+                <div className="location-actions">
+                  <button className="primary-btn" type="button" onClick={requestCurrentLocation}>
+                    Use my current location
+                  </button>
+                </div>
+                {locationStatus && <p className="status-text">{locationStatus}</p>}
                 <div className="preference-sections">
                   {preferenceGroups.map((group) => (
                     <div key={group.key} className="choice-group">
@@ -1071,6 +1350,12 @@ export default function App() {
                   <>
                     <h3>{closestSpot.name}</h3>
                     <p>{closestSpot.reason}</p>
+                    {closestSpot.distance !== null && (
+                      <p className="preview-location">
+                        Closest match · {formatDistanceLabel(closestSpot.distance)}
+                      </p>
+                    )}
+                    {locationInput && <p className="preview-location">Using {locationInput}</p>}
                     <div className="preview-badges">
                       <span>{closestSpot.noise} noise</span>
                       <span>{closestSpot.comfort} comfort</span>
@@ -1093,22 +1378,20 @@ export default function App() {
 
           {screen === 'recommendation' && (
             <div className="skeleton-view">
-              <p className="eyebrow">Recommended spot</p>
               {chosenSpot ? (
                 <>
-                  <h2>{chosenSpot.name}</h2>
-                  <p>{chosenSpot.reason}</p>
                   <div className="recommendation-list">
                     {recommendedSpots.map((spot, index) => {
                       const isChosen = chosenSpot.id === spot.id
+                      const distanceLabel = formatDistanceLabel(spot.distance)
                       return (
                         <article key={spot.id} className={`recommendation-item ${isChosen ? 'featured' : ''}`}>
                           <div>
-                            <p className="eyebrow">Option {index + 1}</p>
+                            <p className="eyebrow">{index === 0 ? 'Closest match' : `Option ${index + 1}`}</p>
                             <h3>{spot.name}</h3>
                           </div>
                           <p>{spot.reason}</p>
-                          <p className="spot-address">{spot.address}</p>
+                          {distanceLabel && <p className="preview-location">{distanceLabel}</p>}
                           <div className="preview-badges">
                             <span>{spot.noise} noise</span>
                             <span>{spot.comfort} comfort</span>
@@ -1121,7 +1404,10 @@ export default function App() {
                             referrerPolicy="no-referrer-when-downgrade"
                             src={buildGoogleMapsEmbedUrl(spot.address)}
                           />
-                          <button className="secondary-btn" onClick={() => setSelectedSpot(spot)}>
+                          <button
+                            className={`feedback-btn ${isChosen ? 'selected' : ''}`}
+                            onClick={() => setSelectedSpot(spot)}
+                          >
                             {isChosen ? 'Chosen spot' : 'Choose this spot'}
                           </button>
                         </article>
@@ -1146,7 +1432,10 @@ export default function App() {
                   <input type="range" min="1" max="4" value={studyHours} onChange={(e) => setStudyHours(Number(e.target.value))} />
                   <strong>{studyHours} hour session</strong>
                 </label>
-                <button className="primary-btn" onClick={startSession}>Start study session</button>
+                <div className="session-action-row">
+                  <button className="secondary-btn" onClick={() => setScreen('preferences')}>Back</button>
+                  <button className="primary-btn" onClick={startSession}>Start study session</button>
+                </div>
               </div>
             </div>
           )}
